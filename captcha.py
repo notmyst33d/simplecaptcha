@@ -1,4 +1,4 @@
-import asyncio, random, string, uuid, time
+import os, asyncio, random, string, uuid, time
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from aiohttp import web
@@ -12,11 +12,13 @@ image_w = 120
 image_h = 60
 timeout = 60 * 5
 verify_timeout = 30
-gc_sleep = 10
+gc_sleep = 3
 
 captcha_cache = {}
 verify_cache = {}
 gc_queue = []
+
+captcha_host = os.environ.get("CAPTCHA_HOST", "http://localhost:6729")
 
 def get_random_color():
     return (np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255))
@@ -132,9 +134,9 @@ async def captcha_challenge(req):
 
     return web.json_response({
         "uuid": captcha_uuid,
-        "challenge": f"http://localhost:6729/challenge/{captcha_uuid}",
-        "submit": f"http://localhost:6729/submit/{captcha_uuid}",
-        "verify": f"http://localhost:6729/verify/{verify_uuid}"
+        "challenge": f"{captcha_host}/challenge/{captcha_uuid}",
+        "submit": f"{captcha_host}/submit/{captcha_uuid}",
+        "verify": f"{captcha_host}/verify/{verify_uuid}"
     })
 
 @routes.get("/verify/{uuid}")
@@ -188,4 +190,4 @@ loop.create_task(garbage_collector_task())
 
 app = web.Application()
 app.add_routes(routes)
-web.run_app(app, port=6729, loop=loop)
+web.run_app(app, port=int(os.environ.get("PORT", 6729)), loop=loop)
