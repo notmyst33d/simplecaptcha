@@ -53,8 +53,8 @@ async def garbage_collector_task():
             print("[Garbage Collector] Something went wrong while processing the cache")
             await asyncio.sleep(gc_sleep)
 
-@routes.get("/challenge/{type}")
-async def captcha_challenge(req):
+@routes.get("/captcha/{type}")
+async def captcha_create(req):
     captcha_type = req.match_info["type"]
 
     if captcha_type == "easy":
@@ -128,6 +128,7 @@ async def captcha_challenge(req):
     }
 
     return web.json_response({
+        "key_id": key_id,
         "image": f"{captcha_host}/image/{key_id}",
         "verify": f"{captcha_host}/verify/{key}/"
     })
