@@ -17,7 +17,7 @@ Simple captcha service
 
 ## API
 ### `GET /captcha/{type}`
-Requires no extra parameters, returns 200 on success
+Requires no extra parameters, returns 200 on success and 500 if there is a server-side issue
 
 JSON:
 ```
@@ -36,7 +36,7 @@ Available types: `easy`, `normal`, `hard`
 Requires no extra parameters, returns 200 and the captcha image on success and 404 when captcha is not present in the cache
 
 ### `GET /verify/{key}/{solution}`
-Requires `key` and `solution` parameters in the URL, returns 200 on success, 403 on failure and 404 when captcha is not present in the cache, garbage collector will remove the captcha from the cache if 200 was returned
+Requires `key` and `solution` parameters in the URL, returns 200 on success, 401 on failure and 404 when captcha is not present in the cache, garbage collector will remove the captcha from the cache if 200 was returned
 
 JSON:
 ```

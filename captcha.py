@@ -149,7 +149,7 @@ async def captcha_verify(req):
         cache[key]["gc"] = True
         return web.json_response({"type": cache[key_id]["type"]})
     else:
-        return web.json_response({"type": cache[key_id]["type"]}, status=403)
+        return web.json_response({"type": cache[key_id]["type"]}, status=401)
 
 @routes.get("/image/{key_id}")
 async def captcha_image(req):
