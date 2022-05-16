@@ -1,0 +1,3 @@
+numpy
+aiohttp
+Pillow

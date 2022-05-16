@@ -1,4 +1,4 @@
-import os, asyncio, random, string, uuid, time
+import os, asyncio, random, string, time
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from aiohttp import web
@@ -10,13 +10,10 @@ routes = web.RouteTableDef()
 # Defaults, you can change them if you want
 image_w = 120
 image_h = 60
-timeout = 60 * 5
-verify_timeout = 30
-gc_sleep = 3
 
-captcha_cache = {}
-verify_cache = {}
-gc_queue = []
+cache = {}
+cache_max = 60 * 5
+gc_sleep = 3
 
 captcha_host = os.environ.get("CAPTCHA_HOST", "http://localhost:6729")
 
@@ -40,54 +37,46 @@ async def garbage_collector_task():
         try:
             count = 0
             run_time = time.time()
-            captcha_cache_keys = list(captcha_cache.keys())
+            keys = list(cache.keys())
 
-            for key in captcha_cache_keys:
-                if captcha_cache[key]["solved"]:
-                    if run_time > captcha_cache[key]["solved_timestamp"] + verify_timeout:
-                        del verify_cache[captcha_cache[key]["verify"]]
-                        del captcha_cache[key]
-                        count += 1
-                elif not captcha_cache[key]["solved"] and run_time > captcha_cache[key]["timestamp"] + timeout:
-                    del verify_cache[captcha_cache[key]["verify"]]
-                    del captcha_cache[key]
+            for key in keys:
+                if cache[key]["gc"]:
+                    del cache[key]
+                    count += 1
+                elif not cache[key]["gc"] and run_time > cache[key]["timestamp"] + cache_max:
+                    del cache[key]
                     count += 1
 
-            for key in gc_queue:
-                try:
-                    del verify_cache[captcha_cache[key]["verify"]]
-                    del captcha_cache[key]
-                    gc_queue.remove(key)
-                    count += 1
-                except:
-                    # This should only happen if it was GC'd already
-                    gc_queue.remove(key)
-
-            print(f"[Garbage Collector] {len(captcha_cache_keys)} objects in cache, {count} objects collected in this run")
+            print(f"[Garbage Collector] {len(keys)} objects in cache, {count} objects collected in this run")
             await asyncio.sleep(gc_sleep)
         except:
             print("[Garbage Collector] Something went wrong while processing the cache")
             await asyncio.sleep(gc_sleep)
 
-@routes.get("/challenge")
+@routes.get("/challenge/{type}")
 async def captcha_challenge(req):
-    try:
-        scale = int(req.query.get("scale", 1))
-        lines = int(req.query.get("lines", 12))
-        noise_level = float(req.query.get("noise", 0.25))
-        randomize_text_color = True if req.query.get("randomize_text_color", "false") == "true" else False
-        randomize_bg_color = True if req.query.get("randomize_bg_color", "true") == "true" else False
-    except:
-        return web.Response(text="An error occurred while parsing the arguments", status=500, content_type="text/plain")
+    captcha_type = req.match_info["type"]
 
-    if scale > 4 or scale < 1:
-        return web.Response(text="\"scale\" should be between 1 and 4", status=500, content_type="text/plain")
-
-    if lines > 32 or lines < 1:
-        return web.Response(text="\"lines\" should be between 1 and 32", status=500, content_type="text/plain")
-
-    if noise_level > 1 or noise_level < 0.01:
-        return web.Response(text="\"noise\" should be between 0.01 and 1", status=500, content_type="text/plain")
+    if captcha_type == "easy":
+        scale = 1
+        lines = 12
+        lines_width = 2
+        noise_level = 0
+        randomize_bg_color = False
+    elif captcha_type == "normal":
+        scale = 1
+        lines = 6
+        lines_width = 4
+        noise_level = 0.4
+        randomize_bg_color = False
+    elif captcha_type == "hard":
+        scale = 1
+        lines = 6
+        lines_width = 4
+        noise_level = 0.25
+        randomize_bg_color = True
+    else:
+        return web.Response(text="Unknown captcha type", status=500, content_type="text/plain")
 
     text = "".join(random.choice(string.digits) for i in range(0, 6))
 
@@ -104,85 +93,77 @@ async def captcha_challenge(req):
     text_h = (image.size[1] / 2) - (text_size[1] / 2) - (4 * scale)
 
     # Draw text
-    draw.text((text_w, text_h), text, font=text_font, fill=await async_get_random_color() if randomize_text_color else 0)
+    draw.text((text_w, text_h), text, font=text_font, fill=0)
 
     # Start applying effects
     noise = Image.fromarray(np.random.randint(0, 255, (image_h * scale, image_w * scale, 3), dtype=np.dtype("uint8")))
 
     for i in range(0, lines):
-        draw.line(await async_get_random_line_pos(scale), fill=0, width=1 * scale)
+        draw.line(await async_get_random_line_pos(scale), fill=0, width=lines_width * scale)
 
     image = Image.blend(image, noise, alpha=noise_level)
 
+    # Save image in memory
     bio = BytesIO()
-    bio.name = "challenge.jpg"
-    image.save(bio)
+    image.save(bio, "JPEG")
 
-    captcha_uuid = str(uuid.uuid4())
-    verify_uuid = str(uuid.uuid4())
+    # Key ID and the key
+    key_id = os.urandom(16).hex().upper()
+    key = os.urandom(16).hex().upper()
 
-    captcha_cache[captcha_uuid] = {
-        "timestamp": time.time(),
-        "verify": verify_uuid,
+    shared_timestamp = time.time()
+
+    cache[key_id] = {
+        "type": captcha_type,
         "image": bio,
-        "text": text,
-        "solved": False,
-        "solved_timestamp": None
+        "solution": text,
+        "timestamp": shared_timestamp,
+        "gc": False
     }
 
-    verify_cache[verify_uuid] = captcha_uuid
+    cache[key] = {
+        "key_id": key_id,
+        "timestamp": shared_timestamp,
+        "gc": False
+    }
 
     return web.json_response({
-        "uuid": captcha_uuid,
-        "challenge": f"{captcha_host}/challenge/{captcha_uuid}",
-        "submit": f"{captcha_host}/submit/{captcha_uuid}",
-        "verify": f"{captcha_host}/verify/{verify_uuid}"
+        "image": f"{captcha_host}/image/{key_id}",
+        "verify": f"{captcha_host}/verify/{key}/"
     })
 
-@routes.get("/verify/{uuid}")
+@routes.get("/verify/{key}/{solution}")
 async def captcha_verify(req):
-    verify_uuid = req.match_info["uuid"]
-    captcha_uuid = verify_cache.get(verify_uuid)
+    solution = req.match_info["solution"]
+    key = req.match_info["key"]
+    key_id = cache.get(key, {}).get("key_id")
 
-    if not captcha_uuid:
+    if not key_id:
         return web.Response(text="The captcha doesnt exist in the cache", status=404, content_type="text/plain")
 
-    captcha_info = captcha_cache.get(captcha_uuid)
+    captcha = cache.get(key_id)
 
-    if captcha_info["solved"]:
-        gc_queue.append(captcha_uuid)
-        return web.Response(text="Solved", status=200, content_type="text/plain")
+    if captcha["solution"] == solution:
+        cache[key_id]["gc"] = True
+        cache[key]["gc"] = True
+        return web.json_response({
+            "success": True,
+            "type": cache[key_id]["type"]
+        })
     else:
-        return web.Response(text="Not solved", status=403, content_type="text/plain")
+        return web.json_response({
+            "success": False,
+            "type": cache[key_id]["type"]
+        }, status=403)
 
-@routes.get("/submit/{uuid}")
-async def captcha_submit(req):
-    captcha_uuid = req.match_info["uuid"]
-    captcha_info = captcha_cache.get(captcha_uuid)
-    text = req.query.get("text")
-
-    if captcha_info:
-        if not text:
-            return web.Response(text="Incorrect", status=403, content_type="text/plain")
-        elif text != captcha_info["text"]:
-            return web.Response(text="Incorrect", status=403, content_type="text/plain")
-        else:
-            captcha_cache[captcha_uuid]["solved"] = True
-            captcha_cache[captcha_uuid]["solved_timestamp"] = time.time()
-            return web.Response(text="Success", status=200, content_type="text/plain")
-    else:
-        return web.Response(text="The captcha doesnt exist in the cache", status=404, content_type="text/plain")
-
-    return web.Response(text="ACK")
-
-@routes.get("/challenge/{uuid}")
+@routes.get("/image/{key_id}")
 async def captcha_image(req):
-    captcha_uuid = req.match_info["uuid"]
-    captcha_info = captcha_cache.get(captcha_uuid)
+    key_id = req.match_info["key_id"]
+    captcha = cache.get(key_id)
 
-    if captcha_info:
-        captcha_info["image"].seek(0)
-        return web.Response(body=captcha_info["image"].read(), content_type="image/jpeg", headers={"Content-Disposition": f"inline; filename=\"challenge-{captcha_uuid}.jpg\""})
+    if captcha:
+        captcha["image"].seek(0)
+        return web.Response(body=captcha["image"].read(), content_type="image/jpeg", headers={"Content-Disposition": f"inline; filename=\"{key_id}.jpg\""})
     else:
         return web.Response(text="The captcha doesnt exist in the cache", status=404, content_type="text/plain")
 
