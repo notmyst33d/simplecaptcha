@@ -41,7 +41,6 @@ Requires `key` and `solution` parameters in the URL, returns 200 on success, 403
 JSON:
 ```
 {
-    "success": true,
     "type": "easy"
 }
 ```
