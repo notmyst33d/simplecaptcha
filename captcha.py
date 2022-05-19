@@ -1,4 +1,4 @@
-import os, asyncio, random, string, time
+import os, asyncio, random, string, time, json
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from aiohttp import web
@@ -15,6 +15,9 @@ cache = {}
 cache_max = 60 * 5
 gc_sleep = 3
 
+with open("types.json", "r") as f:
+    captcha_types = json.loads(f.read())
+
 captcha_host = os.environ.get("CAPTCHA_HOST", "http://localhost:6729")
 
 def get_random_color():
@@ -26,11 +29,39 @@ def get_random_line_pos(scale):
             np.random.randint(0, image_w * scale),
             np.random.randint(0, image_h * scale))
 
-async def async_get_random_color():
-    return await loop.run_in_executor(None, get_random_color)
+def get_captcha(text, type):
+    # Create new image
+    image = Image.new("RGB", (image_w * type["scale"], image_h * type["scale"]), color=get_random_color() if type["randomize_bg_color"] else (255, 255, 255))
+    draw = ImageDraw.Draw(image)
 
-async def async_get_random_line_pos(scale):
-    return await loop.run_in_executor(None, get_random_line_pos, scale)
+    # Open font
+    text_font = ImageFont.truetype("font.otf", 24 * type["scale"])
+
+    # Calculate the centered position of the text
+    text_size = text_font.getsize(text)
+    text_w = (image.size[0] / 2) - (text_size[0] / 2)
+    text_h = (image.size[1] / 2) - (text_size[1] / 2) - (4 * type["scale"])
+
+    # Draw text
+    draw.text((text_w, text_h), text, font=text_font, fill=0)
+
+    # Start applying effects
+    noise = Image.fromarray(np.random.randint(0, 255, (image_h * type["scale"], image_w * type["scale"], 3), dtype=np.dtype("uint8")))
+
+    for i in range(0, type["lines"]):
+        draw.line(get_random_line_pos(type["scale"]), fill=0, width=type["lines_width"] * type["scale"])
+
+    image = Image.blend(image, noise, alpha=type["noise_level"])
+
+    # Save image in memory
+    bio = BytesIO()
+    image.save(bio, "JPEG")
+    bio.seek(0)
+
+    return bio
+
+async def async_get_captcha(text, type):
+    return await loop.run_in_executor(None, get_captcha, text, type)
 
 async def garbage_collector_task():
     while True:
@@ -54,73 +85,32 @@ async def garbage_collector_task():
             await asyncio.sleep(gc_sleep)
 
 @routes.get("/captcha/{type}")
-async def captcha_create(req):
-    captcha_type = req.match_info["type"]
-
-    if captcha_type == "easy":
-        scale = 1
-        lines = 12
-        lines_width = 2
-        noise_level = 0
-        randomize_bg_color = False
-    elif captcha_type == "normal":
-        scale = 1
-        lines = 6
-        lines_width = 4
-        noise_level = 0.4
-        randomize_bg_color = False
-    elif captcha_type == "hard":
-        scale = 1
-        lines = 6
-        lines_width = 4
-        noise_level = 0.25
-        randomize_bg_color = True
-    else:
+async def captcha_entry(req):
+    if not captcha_types.get(req.match_info["type"]):
         return web.Response(text="Unknown captcha type", status=500, content_type="text/plain")
 
+    # Create random captcha text
     text = "".join(random.choice(string.digits) for i in range(0, 6))
 
-    # Create new image
-    image = Image.new("RGB", (image_w * scale, image_h * scale), color=await async_get_random_color() if randomize_bg_color else (255, 255, 255))
-    draw = ImageDraw.Draw(image)
+    # Create captcha image
+    image = await async_get_captcha(text, captcha_types[req.match_info["type"]])
 
-    # Open font
-    text_font = ImageFont.truetype("font.otf", 24 * scale)
-
-    # Calculate the centered position of the text
-    text_size = text_font.getsize(text)
-    text_w = (image.size[0] / 2) - (text_size[0] / 2)
-    text_h = (image.size[1] / 2) - (text_size[1] / 2) - (4 * scale)
-
-    # Draw text
-    draw.text((text_w, text_h), text, font=text_font, fill=0)
-
-    # Start applying effects
-    noise = Image.fromarray(np.random.randint(0, 255, (image_h * scale, image_w * scale, 3), dtype=np.dtype("uint8")))
-
-    for i in range(0, lines):
-        draw.line(await async_get_random_line_pos(scale), fill=0, width=lines_width * scale)
-
-    image = Image.blend(image, noise, alpha=noise_level)
-
-    # Save image in memory
-    bio = BytesIO()
-    image.save(bio, "JPEG")
-
-    # Key ID and the key
+    # Create key and key ID
     key_id = os.urandom(16).hex().upper()
     key = os.urandom(16).hex().upper()
 
     shared_timestamp = time.time()
 
+    # Save captcha info in the cache
     cache[key_id] = {
-        "type": captcha_type,
-        "image": bio,
-        "solution": text,
+        "type": req.match_info["type"],
+        "text": text,
+        "image": image,
         "timestamp": shared_timestamp,
         "gc": False
     }
 
+    # Save key info in the cache
     cache[key] = {
         "key_id": key_id,
         "timestamp": shared_timestamp,
@@ -133,9 +123,8 @@ async def captcha_create(req):
         "verify": f"{captcha_host}/verify/{key}/"
     })
 
-@routes.get("/verify/{key}/{solution}")
+@routes.get("/verify/{key}/{text}")
 async def captcha_verify(req):
-    solution = req.match_info["solution"]
     key = req.match_info["key"]
     key_id = cache.get(key, {}).get("key_id")
 
@@ -144,7 +133,7 @@ async def captcha_verify(req):
 
     captcha = cache.get(key_id)
 
-    if captcha["solution"] == solution:
+    if captcha["text"] == req.match_info["text"]:
         cache[key_id]["gc"] = True
         cache[key]["gc"] = True
         return web.json_response({"type": cache[key_id]["type"]})
@@ -161,6 +150,18 @@ async def captcha_image(req):
         return web.Response(body=captcha["image"].read(), content_type="image/jpeg", headers={"Content-Disposition": f"inline; filename=\"{key_id}.jpg\""})
     else:
         return web.Response(text="The captcha doesnt exist in the cache", status=404, content_type="text/plain")
+
+# Dont use this
+if os.environ.get("RALSEI"):
+    @routes.get("/showcase/{type}")
+    async def captcha_showcase(req):
+        if not captcha_types.get(req.match_info["type"]):
+            return web.Response(text="Unknown captcha type", status=500, content_type="text/plain")
+
+        text = "".join(random.choice(string.digits) for i in range(0, 6))
+        image = await async_get_captcha(text, captcha_types[req.match_info["type"]])
+
+        return web.Response(body=image.read(), content_type="image/jpeg", headers={"Content-Disposition": "inline; filename=\"showcase.jpg\""})
 
 loop.create_task(garbage_collector_task())
 
