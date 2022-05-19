@@ -1,3 +1,6 @@
+![](https://captcha.ralsei.cf/showcase/easy)
+![](https://captcha.ralsei.cf/showcase/normal)
+![](https://captcha.ralsei.cf/showcase/hard)
 # simplecaptcha
 Simple captcha service
 
