@@ -1,12 +1,13 @@
-![](https://captcha.ralsei.cf/showcase/easy)
-![](https://captcha.ralsei.cf/showcase/normal)
-![](https://captcha.ralsei.cf/showcase/hard)
+![](https://captcha.ralsei.cf/random/easy)
+![](https://captcha.ralsei.cf/random/normal)
+![](https://captcha.ralsei.cf/random/hard)
 # simplecaptcha
 Simple captcha service
 
 ## Environment variables
 `PORT` - The port to run the HTTP server on  
 `CAPTCHA_HOST` - The host where the service is running, for example: `https://captcha.myhost.com`
+`ENABLE_USELESS_FEATURES` - Does what it says
 
 ## How to use it
 1. Make your own endpoint for the captcha and send `key_id` and `image` fields to the user
