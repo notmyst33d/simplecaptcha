@@ -151,10 +151,11 @@ async def captcha_image(req):
     else:
         return web.Response(text="The captcha doesnt exist in the cache", status=404, content_type="text/plain")
 
-# Dont use this
-if os.environ.get("RALSEI"):
-    @routes.get("/showcase/{type}")
-    async def captcha_showcase(req):
+if os.environ.get("ENABLE_USELESS_FEATURES"):
+    # This is used for readme
+    # Its useless for most deployments other than mine
+    @routes.get("/random/{type}")
+    async def captcha_random(req):
         if not captcha_types.get(req.match_info["type"]):
             return web.Response(text="Unknown captcha type", status=500, content_type="text/plain")
 
