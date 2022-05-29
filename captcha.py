@@ -18,7 +18,7 @@ gc_sleep = 3
 with open("types.json", "r") as f:
     captcha_types = json.loads(f.read())
 
-captcha_host = os.environ.get("CAPTCHA_HOST", "http://localhost:6729")
+captcha_host = os.environ.get("CAPTCHA_HOST", "http://localhost:10000")
 
 def get_random_color():
     return (np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255))
@@ -168,4 +168,4 @@ loop.create_task(garbage_collector_task())
 
 app = web.Application()
 app.add_routes(routes)
-web.run_app(app, port=int(os.environ.get("PORT", 6729)), loop=loop)
+web.run_app(app, port=int(os.environ.get("PORT", 10000)), loop=loop)
