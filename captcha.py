@@ -49,6 +49,9 @@ async def garbage_collector_task():
 
             print(f"[Garbage Collector] {len(keys)} objects in cache, {count} objects collected in this run")
             await asyncio.sleep(gc_sleep)
+        except asyncio.exceptions.CancelledError:
+            print("[Garbage Collector] Shutting down")
+            return
         except:
             print("[Garbage Collector] Something went wrong while processing the cache")
             await asyncio.sleep(gc_sleep)
